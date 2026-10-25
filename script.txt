@@ -1,0 +1,406 @@
+(() => {
+  "use strict";
+
+  // WIRTUALNE LABORATORIUM
+  const canvas = document.getElementById("simCanvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    document.getElementById("simStatus").textContent =
+      "Twoja przeglądarka nie obsługuje tej symulacji.";
+    return;
+  }
+
+  const tempInput = document.getElementById("temp");
+  const densityInput = document.getElementById("density");
+  const tempValue = document.getElementById("tempValue");
+  const densityValue = document.getElementById("densityValue");
+  const toggleBtn = document.getElementById("toggleBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const trailBtn = document.getElementById("trailBtn");
+  const simStatus = document.getElementById("simStatus");
+  const labNote = document.getElementById("labNote");
+
+  let width = 0, height = 0, dpr = 1;
+  let particles = [];
+  let brown = { x: 0, y: 0, vx: 0, vy: 0 };
+  let running = true;
+  let trails = true;
+  let lastTime = 0;
+  let frameId = 0;
+
+  const rand = (min, max) => Math.random() * (max - min) + min;
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    width = rect.width;
+    height = rect.height;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    brown.x = Math.min(Math.max(brown.x, 22), Math.max(22, width - 22));
+    brown.y = Math.min(Math.max(brown.y, 22), Math.max(22, height - 22));
+    draw();
+  }
+
+  function makeParticles(count) {
+    particles = [];
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: rand(5, Math.max(6, width - 5)),
+        y: rand(5, Math.max(6, height - 5)),
+        vx: rand(-1, 1),
+        vy: rand(-1, 1),
+        r: rand(1.3, 2.6)
+      });
+    }
+  }
+
+  function resetSimulation() {
+    brown = {
+      x: width / 2,
+      y: height / 2,
+      vx: rand(-1, 1),
+      vy: rand(-1, 1)
+    };
+    makeParticles(Number(densityInput.value));
+    lastTime = 0;
+    draw();
+    labNote.textContent =
+      "Eksperyment rozpoczęty od nowa. Obserwuj nieregularny tor żółtej drobiny.";
+  }
+
+  function updateLabels() {
+    tempValue.textContent = tempInput.value + "%";
+    densityValue.textContent = densityInput.value;
+  }
+
+  function update(dt) {
+    const temperature = Number(tempInput.value) / 50;
+    const step = Math.min(dt / 16.67, 2.5);
+    const jitter = 0.12 * temperature;
+
+    for (const p of particles) {
+      p.vx += rand(-jitter, jitter) * step;
+      p.vy += rand(-jitter, jitter) * step;
+
+      const speed = Math.hypot(p.vx, p.vy);
+      const maxSpeed = 1.4 * temperature + 0.3;
+      if (speed > maxSpeed) {
+        p.vx = p.vx / speed * maxSpeed;
+        p.vy = p.vy / speed * maxSpeed;
+      }
+
+      p.x += p.vx * step;
+      p.y += p.vy * step;
+
+      if (p.x < 3 || p.x > width - 3) p.vx *= -1;
+      if (p.y < 3 || p.y > height - 3) p.vy *= -1;
+
+      p.x = Math.max(3, Math.min(width - 3, p.x));
+      p.y = Math.max(3, Math.min(height - 3, p.y));
+
+      // Umowny model przypadkowych uderzeń w większą drobinę.
+      const dx = p.x - brown.x;
+      const dy = p.y - brown.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 20 && dist > 0.01) {
+        const impulse = 0.055 * temperature;
+        brown.vx += dx / dist * impulse + rand(-impulse, impulse);
+        brown.vy += dy / dist * impulse + rand(-impulse, impulse);
+        p.vx += dx / dist * 0.15;
+        p.vy += dy / dist * 0.15;
+      }
+    }
+
+    // Drobina zmienia kierunek w nieregularny sposób.
+    brown.vx += rand(-0.14, 0.14) * temperature * step;
+    brown.vy += rand(-0.14, 0.14) * temperature * step;
+
+    // Ograniczenie prędkości dla czytelnej animacji.
+    const speed = Math.hypot(brown.vx, brown.vy);
+    const maxBrownSpeed = 2.2 * temperature + 0.5;
+    if (speed > maxBrownSpeed) {
+      brown.vx = brown.vx / speed * maxBrownSpeed;
+      brown.vy = brown.vy / speed * maxBrownSpeed;
+    }
+
+    brown.x += brown.vx * step;
+    brown.y += brown.vy * step;
+
+    const margin = 16;
+    if (brown.x < margin) {
+      brown.x = margin;
+      brown.vx = Math.abs(brown.vx);
+    }
+    if (brown.x > width - margin) {
+      brown.x = width - margin;
+      brown.vx = -Math.abs(brown.vx);
+    }
+    if (brown.y < margin) {
+      brown.y = margin;
+      brown.vy = Math.abs(brown.vy);
+    }
+    if (brown.y > height - margin) {
+      brown.y = height - margin;
+      brown.vy = -Math.abs(brown.vy);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#080f20";
+    ctx.fillRect(0, 0, width, height);
+
+    // Delikatna siatka w tle.
+    ctx.strokeStyle = "rgba(255,255,255,0.035)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x < width; x += 30) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+    }
+    for (let y = 0; y < height; y += 30) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+    }
+
+    // Ślad drobiny jest rysowany z jej krótkiej historii.
+    if (trails && brown.history) {
+      ctx.beginPath();
+      brown.history.forEach((point, i) => {
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.strokeStyle = "rgba(173,152,255,.65)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    for (const p of particles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(104,229,224,.82)";
+      ctx.fill();
+    }
+
+    // Poświata i większa, obserwowana drobina.
+    const glow = ctx.createRadialGradient(
+      brown.x, brown.y, 2, brown.x, brown.y, 26
+    );
+    glow.addColorStop(0, "rgba(255,212,121,.3)");
+    glow.addColorStop(1, "rgba(255,212,121,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(brown.x, brown.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(brown.x, brown.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd479";
+    ctx.fill();
+    ctx.strokeStyle = "#fff2ce";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  function animate(time) {
+    frameId = requestAnimationFrame(animate);
+    if (!running || !width || !height) return;
+
+    const dt = lastTime ? Math.min(time - lastTime, 40) : 16.67;
+    lastTime = time;
+    update(dt);
+
+    if (!brown.history) brown.history = [];
+    brown.history.push({ x: brown.x, y: brown.y });
+    if (brown.history.length > 160) brown.history.shift();
+    if (!trails) brown.history = [];
+
+    draw();
+  }
+
+  toggleBtn.addEventListener("click", () => {
+    running = !running;
+    toggleBtn.textContent = running ? "⏸ Wstrzymaj" : "▶ Wznów";
+    simStatus.textContent = running ? "● Symulacja działa" : "Ⅱ Symulacja wstrzymana";
+    if (running) lastTime = 0;
+  });
+
+  resetBtn.addEventListener("click", () => {
+    resetSimulation();
+    if (!running) {
+      running = true;
+      toggleBtn.textContent = "⏸ Wstrzymaj";
+      simStatus.textContent = "● Symulacja działa";
+    }
+  });
+
+  trailBtn.addEventListener("click", () => {
+    trails = !trails;
+    trailBtn.textContent = trails ? "Ślad: włączony" : "Ślad: wyłączony";
+    trailBtn.setAttribute("aria-pressed", String(trails));
+    if (!trails) brown.history = [];
+    draw();
+  });
+
+  tempInput.addEventListener("input", () => {
+    updateLabels();
+    labNote.textContent = Number(tempInput.value) > 65
+      ? "Wyższa temperatura w modelu oznacza intensywniejszy ruch. Porównaj tor drobiny z wcześniejszą obserwacją."
+      : "Zmieniaj temperaturę i obserwuj, jak zmienia się ruch cząsteczek w tym modelu.";
+  });
+
+  densityInput.addEventListener("input", () => {
+    updateLabels();
+    makeParticles(Number(densityInput.value));
+  });
+
+  window.addEventListener("resize", resizeCanvas);
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(resizeCanvas).observe(canvas);
+  }
+
+  resizeCanvas();
+  updateLabels();
+  resetSimulation();
+  frameId = requestAnimationFrame(animate);
+
+  // QUIZ
+  const quizData = [
+    {
+      q: "1. Co nazywamy ruchami Browna?",
+      a: [
+        "Ruch planet wokół Słońca",
+        "Chaotyczny ruch małych drobin zawieszonych w cieczy lub gazie",
+        "Ruch fal na morzu"
+      ],
+      correct: 1,
+      why: "Ruchy Browna są nieregularnymi ruchami małych drobin wywołanymi zderzeniami z cząsteczkami ośrodka."
+    },
+    {
+      q: "2. Co jest główną przyczyną ruchów Browna?",
+      a: [
+        "Wiatr wiejący nad cieczą",
+        "Samodzielny ruch żywych drobin",
+        "Nieustanne zderzenia z cząsteczkami cieczy lub gazu"
+      ],
+      correct: 2,
+      why: "Cząsteczki cieczy i gazów poruszają się i uderzają w obserwowaną drobinę z różnych stron."
+    },
+    {
+      q: "3. Kto zaobserwował to zjawisko w 1827 roku?",
+      a: ["Robert Brown", "Albert Einstein", "Isaac Newton"],
+      correct: 0,
+      why: "Robert Brown zaobserwował ruch drobin pyłku roślinnego w wodzie."
+    },
+    {
+      q: "4. Co zazwyczaj dzieje się, gdy rośnie temperatura cieczy?",
+      a: [
+        "Cząsteczki przestają się poruszać",
+        "Cząsteczki poruszają się przeciętnie szybciej",
+        "Wszystkie drobiny poruszają się tylko w górę"
+      ],
+      correct: 1,
+      why: "W wyższej temperaturze cząsteczki mają przeciętnie większą energię kinetyczną."
+    },
+    {
+      q: "5. Czy ruchy Browna pomagają potwierdzić cząsteczkową budowę materii?",
+      a: [
+        "Tak, są jednym z dowodów na ruch cząsteczek",
+        "Nie, nie mają z tym związku",
+        "Tak, ale tylko w ciałach stałych"
+      ],
+      correct: 0,
+      why: "Wyjaśnienie ruchów Browna pomogło potwierdzić, że materia składa się z cząsteczek pozostających w ruchu."
+    }
+  ];
+
+  const questionsEl = document.getElementById("questions");
+  const resultEl = document.getElementById("quizResult");
+  const checkBtn = document.getElementById("checkQuiz");
+  const resetQuizBtn = document.getElementById("resetQuiz");
+  let selections = Array(quizData.length).fill(null);
+  let checked = false;
+
+  function renderQuiz() {
+    questionsEl.innerHTML = "";
+    quizData.forEach((item, qi) => {
+      const box = document.createElement("div");
+      box.className = "question";
+
+      const title = document.createElement("h3");
+      title.textContent = item.q;
+      box.appendChild(title);
+
+      const answers = document.createElement("div");
+      answers.className = "answers";
+
+      item.a.forEach((answer, ai) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "answer";
+        button.textContent = String.fromCharCode(65 + ai) + ". " + answer;
+        button.setAttribute("aria-pressed", String(selections[qi] === ai));
+
+        if (selections[qi] === ai) button.classList.add("selected");
+
+        if (checked) {
+          button.disabled = true;
+          if (ai === item.correct) button.classList.add("correct");
+          else if (selections[qi] === ai) button.classList.add("wrong");
+        }
+
+        button.addEventListener("click", () => {
+          if (checked) return;
+          selections[qi] = ai;
+          renderQuiz();
+        });
+
+        answers.appendChild(button);
+      });
+
+      box.appendChild(answers);
+
+      if (checked) {
+        const feedback = document.createElement("p");
+        feedback.className = "feedback";
+        feedback.textContent = item.why;
+        box.appendChild(feedback);
+      }
+
+      questionsEl.appendChild(box);
+    });
+  }
+
+  checkBtn.addEventListener("click", () => {
+    if (selections.some(value => value === null)) {
+      resultEl.textContent = "Odpowiedz najpierw na wszystkie pytania.";
+      return;
+    }
+
+    checked = true;
+    const score = quizData.reduce(
+      (sum, item, i) => sum + (selections[i] === item.correct ? 1 : 0), 0
+    );
+
+    renderQuiz();
+    resultEl.textContent = `Twój wynik: ${score} / ${quizData.length}. ` +
+      (score === 5 ? "Świetnie! Znasz ruchy Browna!" :
+       score >= 3 ? "Dobra robota! Przeczytaj wyjaśnienia i utrwal wiedzę." :
+       "Nie przejmuj się — przeczytaj wyjaśnienia i spróbuj ponownie.");
+    checkBtn.disabled = true;
+    checkBtn.style.opacity = ".55";
+  });
+
+  resetQuizBtn.addEventListener("click", () => {
+    selections = Array(quizData.length).fill(null);
+    checked = false;
+    resultEl.textContent = "";
+    checkBtn.disabled = false;
+    checkBtn.style.opacity = "1";
+    renderQuiz();
+  });
+
+  renderQuiz();
+})();
